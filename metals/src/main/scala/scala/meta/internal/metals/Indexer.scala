@@ -11,7 +11,6 @@ import scala.meta.internal.builds.WorkspaceReload
 import scala.util.control.NonFatal
 import scala.concurrent.ExecutionContextExecutorService
 import scala.concurrent.Promise
-import scala.meta.internal.metals.ammonite.Ammonite
 import scala.meta.internal.metals.clients.language.DelegatingLanguageClient
 import scala.meta.internal.metals.clients.language.ForwardingMetalsBuildClient
 import scala.meta.internal.mtags.OnDemandSymbolIndex
@@ -42,8 +41,7 @@ final case class Indexer(
     timerProvider: TimerProvider,
     scalafixProvider: () => ScalafixProvider,
     indexingPromise: Promise[Unit],
-    ammonite: Ammonite,
-    lastImportedBuilds: () => List[ImportedBuild],
+    buildData: () => Seq[(String, BuildTargets.WritableData, ImportedBuild)],
     clientConfig: ClientConfiguration,
     definitionIndex: OnDemandSymbolIndex,
     referencesProvider: () => ReferenceProvider,
@@ -65,7 +63,6 @@ final case class Indexer(
     sh: ScheduledExecutorService,
     symbolDocs: Docstrings,
     scalaVersionSelector: ScalaVersionSelector,
-    buildTargetsData: BuildTargets.WritableData,
     sourceMapper: SourceMapper
 ) {
 
@@ -176,14 +173,10 @@ final case class Indexer(
   }
 
   private def indexWorkspace(check: () => Unit): Unit = {
-    val ammBuild = ammonite.lastImportedBuild
-    val lastImportedBuilds0 = lastImportedBuilds()
-    val i = (ammBuild :: lastImportedBuilds0).reduce(_ ++ _)
     timerProvider.timedThunk(
       "reset stuff",
       clientConfig.initialConfig.statistics.isIndex
     ) {
-      buildTargetsData.reset()
       interactiveSemanticdbs().reset()
       buildClient().reset()
       semanticDBIndexer().reset()
@@ -191,14 +184,7 @@ final case class Indexer(
       worksheetProvider().reset()
       symbolSearch().reset()
     }
-    val allBuildTargetsData = Seq(
-      (
-        "main",
-        buildTargetsData,
-        if (lastImportedBuilds0.isEmpty) ImportedBuild.empty
-        else lastImportedBuilds0.reduce(_ ++ _)
-      )
-    )
+    val allBuildTargetsData = buildData()
     for ((name, data, importedBuild) <- allBuildTargetsData)
       timerProvider.timedThunk(
         s"updated $name build targets",
@@ -495,16 +481,12 @@ final case class Indexer(
   def reindexWorkspaceSources(
       paths: Seq[AbsolutePath]
   ): Unit = {
+    val data = buildData().map(_._2)
     for {
       path <- paths.iterator
       if path.isScalaOrJava
     } {
-      indexSourceFile(
-        path,
-        buildTargets.inverseSourceItem(path),
-        None,
-        Seq(buildTargetsData)
-      )
+      indexSourceFile(path, buildTargets.inverseSourceItem(path), None, data)
     }
   }
 }
