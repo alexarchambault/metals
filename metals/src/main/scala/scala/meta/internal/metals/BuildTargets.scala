@@ -22,6 +22,8 @@ import ch.epfl.scala.bsp4j.BuildTargetIdentifier
 import ch.epfl.scala.bsp4j.JavacOptionsResult
 import ch.epfl.scala.bsp4j.ScalacOptionsResult
 import ch.epfl.scala.bsp4j.WorkspaceBuildTargetsResult
+import org.eclipse.{lsp4j => l}
+import scala.meta.inputs.Input
 
 /**
  * In-memory cache for looking up build server metadata.
@@ -73,6 +75,12 @@ final class BuildTargets() {
     data.iterator.flatMap(_.sourceItemsToBuildTarget.iterator)
   private def allBuildTargetIdsInternal: Iterator[(BuildTargets.Data, BuildTargetIdentifier)] =
     data.iterator.flatMap(d => d.allBuildTargetIds.map((d, _)))
+  def actualSource(path: AbsolutePath): Option[BuildTargets.MappedSource] =
+    data.iterator
+      .flatMap(_.actualSources.get(path).iterator)
+      .toStream
+      .headOption
+
   def allBuildTargetIds: Seq[BuildTargetIdentifier] =
     allBuildTargetIdsInternal.map(_._2).toVector
 
@@ -550,6 +558,9 @@ object BuildTargets {
 
     def allTargetRoots: Iterator[AbsolutePath]
     def all: Iterator[BuildTarget]
+    def actualSources
+        : scala.collection.Map[AbsolutePath, BuildTargets.MappedSource]
+
     def allBuildTargetIds: Seq[BuildTargetIdentifier]
     def allScala: Iterator[ScalaTarget]
     def allJava: Iterator[JavaTarget]
@@ -590,6 +601,7 @@ object BuildTargets {
         sourcesJar: AbsolutePath,
         target: BuildTargetIdentifier
     ): Unit
+    def addMappedSource(path: AbsolutePath, mapped: MappedSource): Unit
     def resetConnections(
         idToConn: List[(BuildTargetIdentifier, BuildServerConnection)]
     ): Unit
@@ -626,9 +638,18 @@ object BuildTargets {
     val targetToConnection =
       new mutable.HashMap[BuildTargetIdentifier, BuildServerConnection]
 
+    private val sourceBuildTargetsCache =
+      new util.concurrent.ConcurrentHashMap[AbsolutePath, Option[
+        Iterable[BuildTargetIdentifier]
+      ]]
+
+    val actualSources =
+      TrieMap.empty[AbsolutePath, BuildTargets.MappedSource]
+
     def reset(): Unit = {
       sourceItemsToBuildTarget.values.foreach(_.clear())
       sourceItemsToBuildTarget.clear()
+      sourceBuildTargetsCache.clear()
       buildTargetInfo.clear()
       javaTargetInfo.clear()
       scalaTargetInfo.clear()
@@ -652,6 +673,7 @@ object BuildTargets {
         new ConcurrentLinkedQueue()
       )
       queue.add(buildTarget)
+      sourceBuildTargetsCache.clear()
     }
 
     def linkSourceFile(id: BuildTargetIdentifier, source: AbsolutePath): Unit = {
@@ -704,6 +726,9 @@ object BuildTargets {
       inverseDependencySources(sourcesJar) = acc + target
     }
 
+    def addMappedSource(path: AbsolutePath, mapped: MappedSource): Unit =
+      actualSources(path) = mapped
+
     def resetConnections(
         idToConn: List[(BuildTargetIdentifier, BuildServerConnection)]
     ): Unit = {
@@ -717,13 +742,20 @@ object BuildTargets {
 
     def sourceBuildTargets(
         sourceItem: AbsolutePath
-    ): Option[Iterable[BuildTargetIdentifier]] =
-      sourceItemsToBuildTarget.collectFirst {
-        case (source, buildTargets)
-            if sourceItem.toNIO.getFileSystem == source.toNIO.getFileSystem &&
-              sourceItem.toNIO.startsWith(source.toNIO) =>
-          buildTargets.asScala
-      }
+    ): Option[Iterable[BuildTargetIdentifier]] = {
+      val valueOrNull = sourceBuildTargetsCache.get(sourceItem)
+      if (valueOrNull == null) {
+        val value = sourceItemsToBuildTarget.collectFirst {
+          case (source, buildTargets)
+              if sourceItem.toNIO.getFileSystem == source.toNIO.getFileSystem &&
+                sourceItem.toNIO.startsWith(source.toNIO) =>
+            buildTargets.asScala
+        }
+        val prevOrNull = sourceBuildTargetsCache.putIfAbsent(sourceItem, value)
+        if (prevOrNull == null) value
+        else prevOrNull
+      } else valueOrNull
+    }
 
     def allTargetRoots: Iterator[AbsolutePath] = {
       val scalaTargetRoots = scalaTargetInfo.map(_._2.targetroot)
@@ -802,6 +834,13 @@ object BuildTargets {
         PackageIndex.bootClasspath.iterator
       ).flatten
     }
+  }
+
+  trait MappedSource {
+    def path: AbsolutePath
+    def update(
+        content: String
+    ): (Input.VirtualFile, l.Position => l.Position, AdjustLspData)
   }
 
 }
