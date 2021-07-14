@@ -423,17 +423,23 @@ class MetalsLanguageServer(
             didCompileTarget(report)
             compilers.didCompile(report)
           },
-          changes => {
-            quickConnectToBuildServer().onComplete {
-              case Failure(e) =>
-                scribe.warn("Error refreshing build", e)
-              case Success(_) =>
-                scribe.info("Refreshed build after change")
-            }
+          onBuildTargetDidCompile = { target =>
+            treeView.onBuildTargetDidCompile(target)
+            worksheetProvider.onBuildTargetDidCompile(target)
           },
-          () => treeView,
-          () => worksheetProvider,
-          () => ammonite
+          onBuildTargetDidChangeFunc = { params =>
+            val ammoniteBuildChanged =
+              params.getChanges.asScala.exists(
+                _.getTarget.getUri.isAmmoniteScript
+              )
+            if (ammoniteBuildChanged)
+              ammonite.importBuild().onComplete {
+                case Success(()) =>
+                case Failure(exception) =>
+                  scribe.error("Error re-importing Ammonite build", exception)
+              }
+            ammoniteBuildChanged
+          }
         )
         shellRunner = register(
           new ShellRunner(languageClient, () => userConfig, time, statusBar)
