@@ -54,7 +54,8 @@ inThisBuild(
     ) ::: scala212CompilerOptions,
     scalafixDependencies += "com.github.liancheng" %% "organize-imports" % V.organizeImportRule,
     ScalafixConfig / bspEnabled := false,
-    organization := "org.scalameta",
+    organization := "com.github.alexarchambault.tmp.metals",
+    sonatypeProfileName := "com.github.alexarchambault",
     licenses := Seq(
       "Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")
     ),

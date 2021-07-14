@@ -15,7 +15,7 @@ object DownloadDependencies {
   /**
    * A main class that populates the Coursier download cache with Metals dependencies.
    *
-   * The `org.scalameta:metals` artifact on Maven Central doesn't directly
+   * The `com.github.alexarchambault.tmp.metals:metals` artifact on Maven Central doesn't directly
    * depend on all of its dependencies. Some dependencies like Scalafmt are
    * dynamic depending on the Scalafmt version that users have configured in
    * their workspace. This main method does a best-effort to try and
