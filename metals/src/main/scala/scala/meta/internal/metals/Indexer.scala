@@ -65,7 +65,8 @@ final case class Indexer(
     sh: ScheduledExecutorService,
     symbolDocs: Docstrings,
     scalaVersionSelector: ScalaVersionSelector,
-    buildTargetsData: BuildTargets.WritableData
+    buildTargetsData: BuildTargets.WritableData,
+    sourceMapper: SourceMapper
 ) {
 
   private implicit def ec = executionContext
@@ -409,8 +410,8 @@ final case class Indexer(
   ): Unit = {
 
     try {
-      val sourceToIndex0 = sourceToIndex(source, targetOpt)
-      if (sourceToIndex0.exists) {
+      val sourceToIndex = sourceMapper.actualSource(source, targetOpt)
+      if (sourceToIndex.exists) {
         val dialect = {
           val scalaVersion =
             targetOpt
@@ -433,7 +434,7 @@ final case class Indexer(
           )
         }
         val reluri = source.toIdeallyRelativeURI(sourceItem)
-        val input = sourceToIndex0.toInput
+        val input = sourceToIndex.toInput
         val symbols = ArrayBuffer.empty[WorkspaceSymbolInformation]
         SemanticdbDefinition.foreach(input, dialect) {
           case SemanticdbDefinition(info, occ, owner) =>
@@ -463,7 +464,7 @@ final case class Indexer(
 
         // Since the `symbols` here are toplevel symbols,
         // we cannot use `symbols` for expiring the cache for all symbols in the source.
-        symbolDocs.expireSymbolDefinition(sourceToIndex0, dialect)
+        symbolDocs.expireSymbolDefinition(sourceToIndex, dialect)
       }
     } catch {
       case NonFatal(e) =>
@@ -504,12 +505,4 @@ final case class Indexer(
       )
     }
   }
-
-  private def sourceToIndex(
-      source: AbsolutePath,
-      targetOpt: Option[b.BuildTargetIdentifier]
-  ): AbsolutePath =
-    targetOpt
-      .flatMap(ammonite.generatedScalaPath(_, source))
-      .getOrElse(source)
 }
