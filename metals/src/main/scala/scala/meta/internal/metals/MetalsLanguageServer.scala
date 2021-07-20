@@ -1078,26 +1078,37 @@ class MetalsLanguageServer(
         ()
       }
     } else {
-      if (path.isAmmoniteScript)
-        ammonite.maybeImport(path)
-
-      val compileAndLoad = buildServerPromise.future.flatMap { _ =>
-        Future.sequence(
-          List(
-            compilers.load(List(path)),
-            compilations.compileFile(path)
+      val triggeredImportOpt =
+        if (path.isAmmoniteScript) {
+          ammonite.maybeImport(path)
+          None
+        } else {
+          val hasBuildTarget = buildTargets.inverseSources(path).nonEmpty
+          if (hasBuildTarget || !allowScalaCliAutoImport) None
+          else scalaCli.maybeImport(path)
+        }
+      def load(): Future[Unit] = {
+        val compileAndLoad = buildServerPromise.future.flatMap { _ =>
+          Future.sequence(
+            List(
+              compilers.load(List(path)),
+              compilations.compileFile(path)
+            )
           )
-        )
-      }
-      Future
-        .sequence(
-          List(
-            compileAndLoad,
-            publishSynthetics
+        }
+        Future
+          .sequence(
+            List(
+              compileAndLoad,
+              publishSynthetics
+            )
           )
-        )
         .ignoreValue
-        .asJava
+      }
+      triggeredImportOpt match {
+        case Some(triggeredImport) => triggeredImport.asJava
+        case None => load().asJava
+      }
     }
   }
 
@@ -2281,6 +2292,7 @@ class MetalsLanguageServer(
 
   private var lastImportedBuilds = List.empty[ImportedBuild]
 
+  var allowScalaCliAutoImport: Boolean = true
   val scalaCli: ScalaCli = register(
     new ScalaCli(
       () => compilers,

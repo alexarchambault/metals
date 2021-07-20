@@ -145,6 +145,7 @@ final class TestingServer(
     isReliableFileWatcher = System.getenv("CI") != "true",
     mtagsResolver = mtagsResolver
   )
+  server.allowScalaCliAutoImport = false
   server.connectToLanguageClient(client)
 
   private val trees = new Trees(
