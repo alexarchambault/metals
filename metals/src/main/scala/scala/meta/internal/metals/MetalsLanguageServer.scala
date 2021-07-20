@@ -94,6 +94,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.{Either => JEither}
 import org.eclipse.lsp4j.jsonrpc.services.JsonNotification
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest
 import org.eclipse.{lsp4j => l}
+import scala.meta.internal.metals.scalacli.ScalaCli
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -429,16 +430,32 @@ class MetalsLanguageServer(
           },
           onBuildTargetDidChangeFunc = { params =>
             val ammoniteBuildChanged =
-              params.getChanges.asScala.exists(
-                _.getTarget.getUri.isAmmoniteScript
-              )
+              params.getChanges.asScala.exists { change =>
+                val connOpt = buildTargets.buildServerOf(change.getTarget)
+                connOpt.nonEmpty && connOpt == ammonite.buildServer
+              }
             if (ammoniteBuildChanged)
               ammonite.importBuild().onComplete {
                 case Success(()) =>
                 case Failure(exception) =>
                   scribe.error("Error re-importing Ammonite build", exception)
               }
-            ammoniteBuildChanged
+
+            val scalaCliBuildChanged =
+              params.getChanges.asScala.exists { change =>
+                val connOpt = buildTargets.buildServerOf(change.getTarget)
+                connOpt.nonEmpty && connOpt == scalaCli.buildServer
+              }
+            if (scalaCliBuildChanged)
+              scalaCli
+                .importBuild()
+                .onComplete({
+                  case Success(()) =>
+                  case Failure(exception) =>
+                    scribe.error("Error re-importing Scala CLI build", exception)
+                })
+
+            ammoniteBuildChanged || scalaCliBuildChanged
           }
         )
         shellRunner = register(
@@ -1859,6 +1876,31 @@ class MetalsLanguageServer(
         ammonite.start().asJavaObject
       case ServerCommands.StopAmmoniteBuildServer() =>
         ammonite.stop()
+
+      case ServerCommands.StartScalaCliServer() =>
+        scribe.info("got scala-cli-start command")
+        val f = focusedDocument.map(_.parent) match {
+          case None => Future.unit
+          case Some(newDir) =>
+            val updated =
+              if (newDir.toNIO.startsWith(workspace.toNIO)) {
+                val relPath = workspace.toNIO.relativize(newDir.toNIO)
+                val segments =
+                  relPath.iterator().asScala.map(_.toString).toVector
+                val idx = segments.indexOf(".metals")
+                if (idx < 0) newDir
+                else
+                  AbsolutePath(
+                    segments.take(idx).foldLeft(workspace.toNIO)(_.resolve(_))
+                  )
+              } else newDir
+            if (scalaCli.roots.contains(updated)) Future.unit
+            else scalaCli.start(scalaCli.roots :+ updated)
+        }
+        f.asJavaObject
+      case ServerCommands.StopScalaCliServer() =>
+        scalaCli.stop()
+
       case ServerCommands.NewScalaProject() =>
         newProjectProvider.createNewProjectFromTemplate().asJavaObject
 
@@ -2239,6 +2281,23 @@ class MetalsLanguageServer(
 
   private var lastImportedBuilds = List.empty[ImportedBuild]
 
+  val scalaCli: ScalaCli = register(
+    new ScalaCli(
+      () => compilers,
+      compilations,
+      () => statusBar,
+      buffers,
+      () => indexer.profiledIndexWorkspace(() => ()),
+      () => diagnostics,
+      () => workspace,
+      () => tables,
+      () => buildClient,
+      languageClient,
+      () => clientConfig.initialConfig
+    )
+  )
+  buildTargets.addData(scalaCli.buildTargetsData)
+
   private val indexer = Indexer(
     () => workspaceReload,
     () => doctor,
@@ -2257,7 +2316,8 @@ class MetalsLanguageServer(
           mainBuildTargetsData,
           ImportedBuild.fromList(lastImportedBuilds)
         ),
-        ("ammonite", ammonite.buildTargetsData, ammonite.lastImportedBuild)
+        ("ammonite", ammonite.buildTargetsData, ammonite.lastImportedBuild),
+        ("scala-cli", scalaCli.buildTargetsData, scalaCli.lastImportedBuild)
       ),
     clientConfig,
     definitionIndex,
