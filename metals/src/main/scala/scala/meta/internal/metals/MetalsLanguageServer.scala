@@ -23,6 +23,7 @@ import scala.concurrent.Promise
 import scala.concurrent.TimeoutException
 import scala.concurrent.duration.Duration
 import scala.concurrent.duration._
+import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NonFatal
 
@@ -402,6 +403,14 @@ class MetalsLanguageServer(
           report => {
             didCompileTarget(report)
             compilers.didCompile(report)
+          },
+          changes => {
+            quickConnectToBuildServer().onComplete {
+              case Failure(e) =>
+                scribe.warn("Error refreshing build", e)
+              case Success(_) =>
+                scribe.info("Refreshed build after change")
+            }
           },
           () => treeView,
           () => worksheetProvider,

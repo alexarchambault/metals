@@ -1,6 +1,9 @@
 package scala.meta.internal.metals
 
-case class MetalsBspException(tryingToGet: String, msg: String)
-    extends Exception(
-      s"BSP connection failed in the attempt to get: $tryingToGet.  $msg"
+class MetalsBspException(
+    tryingToGet: String,
+    cause: Throwable
+) extends Exception(
+      s"BSP connection failed in the attempt to get: $tryingToGet.  ${cause.getMessage}",
+      cause
     )
