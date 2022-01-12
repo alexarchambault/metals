@@ -9,6 +9,7 @@ import scala.meta.internal.mtags.MtagsEnrichments._
 import scala.meta.io.AbsolutePath
 
 import munit.TestOptions
+import scala.meta.internal.io.PathIO
 
 class ClassBreakpointSuite extends BaseClassFinderSuite {
 
