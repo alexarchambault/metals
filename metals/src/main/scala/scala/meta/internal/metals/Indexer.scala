@@ -176,7 +176,9 @@ final case class Indexer(
   }
 
   private def indexWorkspace(check: () => Unit): Unit = {
+    val ammBuild = ammonite.lastImportedBuild
     val lastImportedBuilds0 = lastImportedBuilds()
+    val i = (ammBuild :: lastImportedBuilds0).reduce(_ ++ _)
     timerProvider.timedThunk(
       "reset stuff",
       clientConfig.initialConfig.statistics.isIndex
