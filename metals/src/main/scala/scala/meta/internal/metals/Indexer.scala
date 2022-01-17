@@ -70,7 +70,8 @@ final case class Indexer(
     symbolDocs: Docstrings,
     scalaVersionSelector: ScalaVersionSelector,
     testProvider: () => TestSuitesProvider,
-    buildTargetsData: BuildTargets.WritableData
+    buildTargetsData: BuildTargets.WritableData,
+    sourceMapper: SourceMapper
 ) {
 
   private implicit def ec: ExecutionContextExecutorService = executionContext
@@ -416,7 +417,7 @@ final case class Indexer(
   ): Unit = {
 
     try {
-      val sourceToIndex0 = sourceToIndex(source, targetOpt)
+      val sourceToIndex0 = sourceMapper.actualSource(source, targetOpt)
       if (sourceToIndex0.exists) {
         val dialect = {
           val scalaVersion =
@@ -512,12 +513,4 @@ final case class Indexer(
       )
     }
   }
-
-  private def sourceToIndex(
-      source: AbsolutePath,
-      targetOpt: Option[b.BuildTargetIdentifier]
-  ): AbsolutePath =
-    targetOpt
-      .flatMap(ammonite().generatedScalaPath(_, source))
-      .getOrElse(source)
 }

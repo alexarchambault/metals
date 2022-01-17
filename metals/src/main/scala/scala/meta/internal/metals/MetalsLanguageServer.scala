@@ -262,6 +262,13 @@ class MetalsLanguageServer(
   private var testProvider: TestSuitesProvider = _
   private var workspaceReload: WorkspaceReload = _
   private var buildToolSelector: BuildToolSelector = _
+
+  private val sourceMapper = SourceMapper(
+    buildTargets,
+    buffers,
+    () => workspace
+  )
+
   def loadedPresentationCompilerCount(): Int =
     compilers.loadedPresentationCompilerCount()
   var tables: Tables = _
@@ -635,7 +642,6 @@ class MetalsLanguageServer(
             workspace,
             clientConfig,
             () => userConfig,
-            () => ammonite,
             buildTargets,
             buffers,
             symbolSearch,
@@ -646,7 +652,8 @@ class MetalsLanguageServer(
             excludedPackageHandler.isExcludedPackage,
             scalaVersionSelector,
             trees,
-            mtagsResolver
+            mtagsResolver,
+            sourceMapper
           )
         )
         debugProvider = new DebugProvider(
@@ -2259,7 +2266,8 @@ class MetalsLanguageServer(
     symbolDocs,
     scalaVersionSelector,
     () => testProvider,
-    mainBuildTargetsData
+    mainBuildTargetsData,
+    sourceMapper
   )
 
   private def checkRunningBloopVersion(bspServerVersion: String) = {
@@ -2424,16 +2432,7 @@ class MetalsLanguageServer(
         case NonFatal(e) =>
           scribe.error("unexpected error during source scanning", e)
       },
-      toIndexSource = path => {
-        if (path.isAmmoniteScript)
-          for {
-            targets <- buildTargets.sourceBuildTargets(path)
-            target <- targets.headOption
-            toIndex <- ammonite.generatedScalaPath(target, path)
-          } yield toIndex
-        else
-          None
-      }
+      toIndexSource = sourceMapper.actualSource
     )
   }
 
