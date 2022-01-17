@@ -160,7 +160,9 @@ class MetalsLanguageServer(
   val excludedPackageHandler: ExcludedPackagesHandler =
     new ExcludedPackagesHandler(userConfig.excludedPackages)
   var ammonite: Ammonite = _
+  private val mainBuildTargetsData = BuildTargets.Data.create()
   val buildTargets: BuildTargets = BuildTargets.withAmmonite(() => ammonite)
+  buildTargets.addData(mainBuildTargetsData)
   private val buildTargetClasses =
     new BuildTargetClasses(buildTargets)
 
@@ -1334,7 +1336,7 @@ class MetalsLanguageServer(
     ) {
       event.eventType match {
         case EventType.Create =>
-          buildTargets.onCreate(path)
+          mainBuildTargetsData.onCreate(path)
         case _ =>
       }
       onChange(List(path)).asJava
@@ -1653,7 +1655,7 @@ class MetalsLanguageServer(
     params match {
       case ServerCommands.ScanWorkspaceSources() =>
         Future {
-          indexer.indexWorkspaceSources()
+          indexer.indexWorkspaceSources(buildTargets.allWritableData)
         }.asJavaObject
       case ServerCommands.RestartBuildServer() =>
         bspSession.foreach { session =>
@@ -2184,7 +2186,7 @@ class MetalsLanguageServer(
       case Some(session) =>
         bspSession = None
         diagnostics.reset()
-        buildTargets.resetConnections(List.empty)
+        mainBuildTargetsData.resetConnections(List.empty)
         session.shutdown()
     }
   }
@@ -2209,7 +2211,7 @@ class MetalsLanguageServer(
             bspBuild.build.workspaceBuildTargets.getTargets().asScala
           targets.map(t => (t.getId(), bspBuild.connection))
         }
-        buildTargets.resetConnections(idToConnection)
+        mainBuildTargetsData.resetConnections(idToConnection)
         lastImportedBuilds = bspBuilds.map(_.build)
       }
       _ <- indexer.profiledIndexWorkspace(() => doctor.check())
@@ -2256,7 +2258,8 @@ class MetalsLanguageServer(
     sh,
     symbolDocs,
     scalaVersionSelector,
-    () => testProvider
+    () => testProvider,
+    mainBuildTargetsData
   )
 
   private def checkRunningBloopVersion(bspServerVersion: String) = {
@@ -2424,7 +2427,8 @@ class MetalsLanguageServer(
       toIndexSource = path => {
         if (path.isAmmoniteScript)
           for {
-            target <- buildTargets.sourceBuildTargets(path).headOption
+            targets <- buildTargets.sourceBuildTargets(path)
+            target <- targets.headOption
             toIndex <- ammonite.generatedScalaPath(target, path)
           } yield toIndex
         else
