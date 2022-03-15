@@ -65,6 +65,7 @@ import scala.meta.internal.metals.findfiles._
 import scala.meta.internal.metals.formatting.OnTypeFormattingProvider
 import scala.meta.internal.metals.formatting.RangeFormattingProvider
 import scala.meta.internal.metals.newScalaFile.NewFileProvider
+import scala.meta.internal.metals.scalacli.ScalaCli
 import scala.meta.internal.metals.testProvider.TestSuitesProvider
 import scala.meta.internal.metals.watcher.FileWatcher
 import scala.meta.internal.metals.watcher.FileWatcherEvent
@@ -1075,26 +1076,37 @@ class MetalsLanguageServer(
         ()
       }
     } else {
-      if (path.isAmmoniteScript)
-        ammonite.maybeImport(path)
-
-      val compileAndLoad = buildServerPromise.future.flatMap { _ =>
-        Future.sequence(
-          List(
-            compilers.load(List(path)),
-            compilations.compileFile(path)
+      val triggeredImportOpt =
+        if (path.isAmmoniteScript && !allowScalaCliAutoImport) {
+          ammonite.maybeImport(path)
+          None
+        } else {
+          val hasBuildTarget = buildTargets.inverseSources(path).nonEmpty
+          if (hasBuildTarget || !allowScalaCliAutoImport) None
+          else scalaCli.maybeImport(path)
+        }
+      def load(): Future[Unit] = {
+        val compileAndLoad = buildServerPromise.future.flatMap { _ =>
+          Future.sequence(
+            List(
+              compilers.load(List(path)),
+              compilations.compileFile(path)
+            )
           )
-        )
+        }
+        Future
+          .sequence(
+            List(
+              compileAndLoad,
+              publishSynthetics
+            )
+          )
+          .ignoreValue
       }
-      Future
-        .sequence(
-          List(
-            compileAndLoad,
-            publishSynthetics
-          )
-        )
-        .ignoreValue
-        .asJava
+      triggeredImportOpt match {
+        case Some(triggeredImport) => triggeredImport.asJava
+        case None => load().asJava
+      }
     }
   }
 
@@ -1909,6 +1921,31 @@ class MetalsLanguageServer(
         ammonite.start().asJavaObject
       case ServerCommands.StopAmmoniteBuildServer() =>
         ammonite.stop()
+
+      case ServerCommands.StartScalaCliServer() =>
+        scribe.info("got scala-cli-start command")
+        val f = focusedDocument.map(_.parent) match {
+          case None => Future.unit
+          case Some(newDir) =>
+            val updated =
+              if (newDir.toNIO.startsWith(workspace.toNIO)) {
+                val relPath = workspace.toNIO.relativize(newDir.toNIO)
+                val segments =
+                  relPath.iterator().asScala.map(_.toString).toVector
+                val idx = segments.indexOf(".metals")
+                if (idx < 0) newDir
+                else
+                  AbsolutePath(
+                    segments.take(idx).foldLeft(workspace.toNIO)(_.resolve(_))
+                  )
+              } else newDir
+            if (scalaCli.roots.contains(updated)) Future.unit
+            else scalaCli.start(scalaCli.roots :+ updated)
+        }
+        f.asJavaObject
+      case ServerCommands.StopScalaCliServer() =>
+        scalaCli.stop()
+
       case ServerCommands.NewScalaProject() =>
         newProjectProvider.createNewProjectFromTemplate().asJavaObject
 
@@ -2203,16 +2240,34 @@ class MetalsLanguageServer(
       params: b.DidChangeBuildTarget
   ): Unit = {
     val (ammoniteChanges, otherChanges) =
-      params.getChanges.asScala.partition(
-        _.getTarget.getUri.isAmmoniteScript
-      )
+      params.getChanges.asScala.partition { change =>
+        val connOpt = buildTargets.buildServerOf(change.getTarget)
+        connOpt.nonEmpty && connOpt == ammonite.buildServer
+      }
+    val (scalaCliBuildChanges, otherChanges0) =
+      otherChanges.partition { change =>
+        val connOpt = buildTargets.buildServerOf(change.getTarget)
+        connOpt.nonEmpty && connOpt == scalaCli.buildServer
+      }
+
     if (ammoniteChanges.nonEmpty)
       ammonite.importBuild().onComplete {
         case Success(()) =>
         case Failure(exception) =>
           scribe.error("Error re-importing Ammonite build", exception)
       }
-    if (otherChanges.nonEmpty)
+
+    if (scalaCliBuildChanges.nonEmpty)
+      scalaCli
+        .importBuild()
+        .onComplete({
+          case Success(()) =>
+          case Failure(exception) =>
+            scribe
+              .error("Error re-importing Scala CLI build", exception)
+        })
+
+    if (otherChanges0.nonEmpty)
       quickConnectToBuildServer().onComplete {
         case Failure(e) =>
           scribe.warn("Error refreshing build", e)
@@ -2321,6 +2376,24 @@ class MetalsLanguageServer(
 
   private var lastImportedBuilds = List.empty[ImportedBuild]
 
+  var allowScalaCliAutoImport: Boolean = true
+  val scalaCli: ScalaCli = register(
+    new ScalaCli(
+      () => compilers,
+      compilations,
+      () => statusBar,
+      buffers,
+      () => indexer.profiledIndexWorkspace(() => ()),
+      () => diagnostics,
+      () => workspace,
+      () => tables,
+      () => buildClient,
+      languageClient,
+      () => clientConfig.initialConfig
+    )
+  )
+  buildTargets.addData(scalaCli.buildTargetsData)
+
   private val indexer = Indexer(
     () => workspaceReload,
     () => doctor,
@@ -2343,6 +2416,11 @@ class MetalsLanguageServer(
           "ammonite",
           ammonite.buildTargetsData,
           ammonite.lastImportedBuild
+        ),
+        Indexer.BuildTool(
+          "scala-cli",
+          scalaCli.buildTargetsData,
+          scalaCli.lastImportedBuild
         )
       ),
     clientConfig,

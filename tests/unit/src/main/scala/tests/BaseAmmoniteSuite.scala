@@ -388,6 +388,9 @@ abstract class BaseAmmoniteSuite(scalaVersion: String)
       """errored.sc:15:25: error: not found: type Fooz
         |val decodedFoo = decode[Fooz](json)
         |                        ^^^^
+        |errored.sc:18:8: error: not found: type Foozz
+        |decode[Foozz](json)
+        |       ^^^^^
         |""".stripMargin
     for {
       _ <- initialize(

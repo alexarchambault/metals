@@ -148,6 +148,7 @@ final class TestingServer(
     mtagsResolver = mtagsResolver,
     onStartCompilation = onStartCompilation
   )
+  server.allowScalaCliAutoImport = false
   server.connectToLanguageClient(client)
 
   private val trees = new Trees(
