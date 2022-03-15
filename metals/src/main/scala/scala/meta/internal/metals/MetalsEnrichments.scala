@@ -776,18 +776,26 @@ object MetalsEnrichments
     def targetroot: AbsolutePath = {
       item.getOptions.asScala
         .find(_.startsWith("-Xplugin:semanticdb"))
-        .map(arg => {
+        .flatMap { arg =>
           val targetRootOpt = "-targetroot:"
           val sourceRootOpt = "-sourceroot:"
           val targetRootPos = arg.indexOf(targetRootOpt)
           val sourceRootPos = arg.indexOf(sourceRootOpt)
-          if (targetRootPos > sourceRootPos)
-            arg.substring(targetRootPos + targetRootOpt.size).trim()
+          if (targetRootPos >= 0)
+            Some {
+              if (targetRootPos > sourceRootPos)
+                arg.substring(targetRootPos + targetRootOpt.size).trim()
+              else
+                arg
+                  .substring(
+                    sourceRootPos + sourceRootOpt.size,
+                    targetRootPos - 1
+                  )
+                  .trim()
+            }
           else
-            arg
-              .substring(sourceRootPos + sourceRootOpt.size, targetRootPos - 1)
-              .trim()
-        })
+            None
+        }
         .filter(_ != "javac-classes-directory")
         .map(AbsolutePath(_))
         .getOrElse(item.getClassDirectory.toAbsolutePath)
