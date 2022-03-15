@@ -1,8 +1,11 @@
 package scala.meta.internal.bsp
 
+import java.io.InputStream
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.Scanner
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.ExecutionContextExecutorService
 import scala.concurrent.Future
@@ -65,7 +68,9 @@ final class BspServers(
   ): Future[BuildServerConnection] = {
 
     def newConnection(): Future[SocketConnection] = {
+      scribe.info(s"Running BSP server ${details.getArgv}")
       val process = new ProcessBuilder(details.getArgv)
+        .redirectError(ProcessBuilder.Redirect.PIPE)
         .directory(projectDirectory.toFile)
         .start()
 
@@ -77,6 +82,11 @@ final class BspServers(
         process.getInputStream,
         s"${details.getName} input stream"
       )
+
+      var stopSendingOutput = false
+      val sendOutput =
+        logOutputThread(process.getErrorStream, stopSendingOutput)
+      sendOutput.start()
 
       val finished = Promise[Unit]()
       Future {
@@ -90,7 +100,8 @@ final class BspServers(
           output,
           input,
           List(
-            Cancelable(() => process.destroy())
+            Cancelable(() => process.destroy()),
+            Cancelable { () => stopSendingOutput = true }
           ),
           finished
         )
@@ -107,6 +118,33 @@ final class BspServers(
       details.getName()
     )
   }
+
+  private val threadCounter = new AtomicInteger
+  private def logOutputThread(
+      is: InputStream,
+      stopSendingOutput: => Boolean
+  ): Thread =
+    new Thread(
+      s"bsp-server-stderr-to-metals-log-${threadCounter.incrementAndGet()}"
+    ) {
+      setDaemon(true)
+      override def run(): Unit = {
+        val reader = new Scanner(is)
+        var line: String = null
+        while (
+          !stopSendingOutput && {
+            line =
+              try reader.nextLine()
+              catch {
+                case _: NoSuchElementException =>
+                  null
+              }
+            line != null
+          }
+        )
+          scribe.info("BSP server: " + line)
+      }
+    }
 
   /**
    * Returns a list of BspConnectionDetails from reading the .bsp/
