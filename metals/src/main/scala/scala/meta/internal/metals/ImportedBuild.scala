@@ -2,6 +2,9 @@ package scala.meta.internal.metals
 
 import java.{util => ju}
 
+import scala.build.bsp.WrappedSourcesItem
+import scala.build.bsp.WrappedSourcesParams
+import scala.build.bsp.WrappedSourcesResult
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
@@ -17,7 +20,8 @@ case class ImportedBuild(
     scalacOptions: ScalacOptionsResult,
     javacOptions: JavacOptionsResult,
     sources: SourcesResult,
-    dependencySources: DependencySourcesResult
+    dependencySources: DependencySourcesResult,
+    wrappedSources: WrappedSourcesResult
 ) {
   def ++(other: ImportedBuild): ImportedBuild = {
     val updatedBuildTargets = new WorkspaceBuildTargetsResult(
@@ -35,12 +39,16 @@ case class ImportedBuild(
     val updatedDependencySources = new DependencySourcesResult(
       (dependencySources.getItems.asScala ++ other.dependencySources.getItems.asScala).asJava
     )
+    val updatedWrappedSources = new WrappedSourcesResult(
+      (wrappedSources.getItems.asScala ++ other.wrappedSources.getItems.asScala).asJava
+    )
     ImportedBuild(
       updatedBuildTargets,
       updatedScalacOptions,
       updatedJavacOptions,
       updatedSources,
-      updatedDependencySources
+      updatedDependencySources,
+      updatedWrappedSources
     )
   }
 
@@ -57,7 +65,8 @@ object ImportedBuild {
       new ScalacOptionsResult(ju.Collections.emptyList()),
       new JavacOptionsResult(ju.Collections.emptyList()),
       new SourcesResult(ju.Collections.emptyList()),
-      new DependencySourcesResult(ju.Collections.emptyList())
+      new DependencySourcesResult(ju.Collections.emptyList()),
+      new WrappedSourcesResult(ju.Collections.emptyList())
     )
 
   def fromConnection(
@@ -76,13 +85,22 @@ object ImportedBuild {
       dependencySources <- conn.buildTargetDependencySources(
         new DependencySourcesParams(ids)
       )
+      wrappedSources <- conn
+        .buildTargetWrappedSources(
+          new WrappedSourcesParams(ids)
+        )
+        .recover { case ex: MetalsBspException =>
+          scribe.debug("Ignored exception during buildTargetWrappedSources", ex)
+          new WrappedSourcesResult(List.empty[WrappedSourcesItem].asJava)
+        }
     } yield {
       ImportedBuild(
         workspaceBuildTargets,
         scalacOptions,
         javacOptions,
         sources,
-        dependencySources
+        dependencySources,
+        wrappedSources
       )
     }
 

@@ -10,6 +10,8 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
+import scala.build.bsp.WrappedSourcesParams
+import scala.build.bsp.WrappedSourcesResult
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContextExecutorService
 import scala.concurrent.Future
@@ -212,6 +214,12 @@ class BuildServerConnection private (
       val empty = new InverseSourcesResult(Collections.emptyList)
       Future.successful(empty)
     }
+  }
+
+  def buildTargetWrappedSources(
+      params: WrappedSourcesParams
+  ): Future[WrappedSourcesResult] = {
+    register(server => server.buildTargetWrappedSources(params)).asScala
   }
 
   private val cancelled = new AtomicBoolean(false)

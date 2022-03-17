@@ -1367,7 +1367,7 @@ class MetalsLanguageServer(
       event: FileWatcherEvent
   ): CompletableFuture[Unit] = {
     val path = AbsolutePath(event.path)
-    val isScalaOrJava = path.isScalaOrJava
+    val isScalaOrJava = path.isScalaOrJava && !path.isDirectory
     if (isScalaOrJava && event.eventType == EventType.Delete) {
       Future {
         diagnostics.didDelete(path)
@@ -1382,7 +1382,7 @@ class MetalsLanguageServer(
         case _ =>
       }
       onChange(List(path)).asJava
-    } else if (path.isSemanticdb) {
+    } else if (path.isSemanticdb && !path.isDirectory) {
       Future {
         event.eventType match {
           case EventType.Delete =>

@@ -79,10 +79,14 @@ abstract class BaseScalaCliSuite(scalaVersion: String)
     val majorOpt = versionOpt.map(_.split('.').head.toInt)
     majorOpt.exists(_ >= 11)
   }
-  if (isAtLeastJava11)
+  if (isAtLeastJava11) {
     test("simple file") {
       simpleFileTest()
     }
+    test("simple script") {
+      simpleScriptTest()
+    }
+  }
   def simpleFileTest(): Unit = {
     resetImportedPromise()
     val f = for {
@@ -139,6 +143,85 @@ abstract class BaseScalaCliSuite(scalaVersion: String)
       // via Scala CLI-generated Semantic DB
       _ <- assertDefinitionAtLocation(
         "MyTests.scala",
+        "val tests = Test@@s",
+        "utest/Tests.scala"
+      )
+
+      // via presentation compiler, using the Scala CLI build target classpath
+      _ <- assertDefinitionAtLocation(
+        "utest/Tests.scala",
+        "import utest.framework.{TestCallTree, Tr@@ee}",
+        "utest/framework/Tree.scala"
+      )
+
+    } yield ()
+
+    val f0 = f.transform {
+      case Success(()) => Success(())
+      case Failure(ex) => Failure(new Exception(ex))
+    }
+
+    Await.result(f0, Duration.Inf)
+  }
+
+  def simpleScriptTest(): Unit = {
+    resetImportedPromise()
+    val f = for {
+      _ <- initialize(
+        s"""
+           |/metals.json
+           |{
+           |  "a": {
+           |    "scalaVersion": "$scalaVersion"
+           |  }
+           |}
+           |
+           |/scala.conf
+           |
+           |/MyTests.sc
+           |//> using scala "$scalaVersion"
+           |import $$ivy.`com.lihaoyi::utest::0.7.9`, utest._
+           |import $$ivy.`com.lihaoyi::pprint::0.6.4`
+           |
+           |pprint.log(2)
+           |
+           |object MyTests extends TestSuite {
+           |  pprint.log(2)
+           |  val tests = Tests {
+           |    test("foo") {
+           |      assert(2 + 2 == 4)
+           |    }
+           |    test("nope") {
+           |      assert(2 + 2 == 5)
+           |    }
+           |  }
+           |}
+           |""".stripMargin
+      )
+        .transform {
+          case Success(()) => Success(())
+          case Failure(ex) => Failure(new Exception(ex))
+        }
+      _ <- server.didOpen("MyTests.sc").transform {
+        case Success(()) => Success(())
+        case Failure(ex) => Failure(new Exception(ex))
+      }
+
+      _ <- Future
+        .firstCompletedOf(
+          List(
+            importedPromise.future,
+            timeout("import timeout", 80.seconds)
+          )
+        )
+        .transform {
+          case Success(()) => Success(())
+          case Failure(ex) => Failure(new Exception(ex))
+        }
+
+      // via Scala CLI-generated Semantic DB
+      _ <- assertDefinitionAtLocation(
+        "MyTests.sc",
         "val tests = Test@@s",
         "utest/Tests.scala"
       )

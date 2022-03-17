@@ -16,6 +16,7 @@ import scala.concurrent.Promise
 import scala.util.control.NonFatal
 
 import scala.meta.dialects._
+import scala.meta.inputs.Input
 import scala.meta.internal.bsp.BspSession
 import scala.meta.internal.bsp.BuildChange
 import scala.meta.internal.builds.BuildTool
@@ -35,6 +36,7 @@ import scala.meta.internal.worksheets.WorksheetProvider
 import scala.meta.io.AbsolutePath
 
 import ch.epfl.scala.{bsp4j => b}
+import org.eclipse.lsp4j.Position
 
 /**
  * Coordinates build target data fetching and caching, and the re-computation of various
@@ -204,6 +206,48 @@ final case class Indexer(
         data.addWorkspaceBuildTargets(importedBuild.workspaceBuildTargets)
         data.addScalacOptions(importedBuild.scalacOptions)
         data.addJavacOptions(importedBuild.javacOptions)
+        for {
+          item <- importedBuild.wrappedSources.getItems.asScala
+          sourceItem <- item.getSources.asScala
+        } {
+          val path = sourceItem.getUri.toAbsolutePath
+          val generatedPath = sourceItem.getGeneratedUri.toAbsolutePath
+          val topWrapperLineCount = sourceItem.getTopWrapper.count(_ == '\n')
+          val toScala: Position => Position =
+            scPos =>
+              new Position(
+                topWrapperLineCount + scPos.getLine,
+                scPos.getCharacter
+              )
+          val fromScala: Position => Position =
+            scalaPos =>
+              new Position(
+                scalaPos.getLine - topWrapperLineCount,
+                scalaPos.getCharacter
+              )
+          val mappedSource: TargetData.MappedSource =
+            new TargetData.MappedSource {
+              def path = generatedPath
+              def update(
+                  content: String
+              ): (Input.VirtualFile, Position => Position, AdjustLspData) = {
+                val adjustLspData = AdjustedLspData.create(fromScala)
+                val updatedContent =
+                  sourceItem.getTopWrapper + content + sourceItem.getBottomWrapper
+                // suffix update: detect it's required via some field in SourceItem?
+                (
+                  Input.VirtualFile(
+                    generatedPath.toNIO.toString
+                      .stripSuffix(".scala") + ".sc.scala",
+                    updatedContent
+                  ),
+                  toScala,
+                  adjustLspData
+                )
+              }
+            }
+          data.addMappedSource(path, mappedSource)
+        }
         for {
           item <- importedBuild.sources.getItems.asScala
           source <- item.getSources.asScala
